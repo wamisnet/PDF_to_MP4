@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Convert PDF to MP4</title>
+</head>
+<body>
+    <h1>Convert PDF to MP4</h1>
+    <p>ファイルを選択してください。一枚目と二枚目のPDFのページを交互に表示する動画を生成します。</p>
+    <progress id="progress" min="0" max="100" value="0"></progress>
+    <p id="status">ステータスを表示します</p>
+    <input type="file" accept="application/pdf" onchange="uploadPdf(this)" />
+    <p><a href="#" id="downloadLink" style="display:none;">ダウンロード</a></p>
+
+    <canvas id="movieCanvas"></canvas>
+    <canvas id="fastCanvas"></canvas>
+    <canvas id="endCanvas"></canvas>
+
+    <script src="js/pdf.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.9.4/dist/ffmpeg.min.js"></script>
+    <script>
+        const sleep = msec => new Promise(resolve => setTimeout(resolve, msec));
+        const setCanvas = async(pdf,canvas,pageNumber) => {
+            let page = await pdf.getPage(pageNumber);
+            console.log('Page loaded');
+
+            var scale = 1.5;
+            var viewport = page.getViewport({scale: scale});
+
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            var renderTask = page.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport: viewport
+            });
+            await renderTask.promise;
+            console.log('Page rendered');
+            return {data :canvas.getContext('2d').getImageData(0, 200, viewport.width, viewport.height),width:viewport.width,height:viewport.height-300};
+        }
+        const readFileAsync = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader()
+                reader.onload = () => {
+                    resolve(reader.result)
+                }
+                reader.onerror = reject
+                reader.readAsArrayBuffer(file)
+            })
+        };
+        const setProgress = (percentage,status) => {
+            document.getElementById('progress').value = percentage;
+            document.getElementById('status').textContent = status;
+        }
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ log: true });
+        ffmpeg.load();
+        const pdfJsLib = window['pdfjs-dist/build/pdf'];
+
+        // The workerSrc property shall be specified.
+        pdfJsLib.GlobalWorkerOptions.workerSrc = 'js/pdf.worker.js';
+
+        uploadPdf = async (e) => {
+            if(!e.files[0])return;
+            setProgress(5,"PDF upload");
+            const loadingTask = pdfJsLib.getDocument(await readFileAsync(e.files[0]));
+            loadingTask.promise.then(async function (pdf) {
+                console.log('PDF loaded');
+                setProgress(10,"PDF loaded");
+                const fastCanvas = await setCanvas(pdf, document.getElementById('fastCanvas'), 1);
+                const endCanvas = await setCanvas(pdf, document.getElementById('endCanvas'), 2);
+                setProgress(20,"PDF rendered");
+                const canvas = document.getElementById('movieCanvas');
+                canvas.height = fastCanvas.height;
+                canvas.width = fastCanvas.width;
+                const ctx = canvas.getContext("2d");
+
+                const recorder = new MediaRecorder(canvas.captureStream(), {mimeType: "video/webm;codecs=h264"});
+                const anchor = document.getElementById('downloadLink');
+                anchor.style.display = 'none';
+                //録画終了時に動画ファイルのダウンロードリンクを生成
+                recorder.ondataavailable = async function (e) {
+                    setProgress(60,"mp4 encode start");
+                    console.log("mp4 encode start");
+                    ffmpeg.FS('writeFile', "name", await fetchFile(new Uint8Array(await (new Blob([e.data])).arrayBuffer())));
+                    await ffmpeg.run('-i', "name", 'output.mp4');
+                    const data = ffmpeg.FS('readFile', 'output.mp4');
+                    console.log("mp4 encode finish");
+                    setProgress(90,"mp4 encode finish");
+                    anchor.download = 'movie.mp4';
+                    anchor.href = window.URL.createObjectURL(new Blob([data.buffer], {type: 'video/mp4'}));
+                    anchor.style.display = 'block';
+                    anchor.click();
+                    setProgress(100,"mp4 download");
+                }
+                //録画開始
+                setProgress(30,"PDF recorder start");
+                await sleep(2000);
+                recorder.start();
+                for (let l = 0; l < 5; l++) {
+                    for (let i = 0; i < 2; i++) {
+                        // Fetch the first page
+                        ctx.clearRect(0, 0, fastCanvas.width, fastCanvas.height);
+                        ctx.putImageData(i === 0 ? fastCanvas.data : endCanvas.data, 0, 0);
+                        await sleep(500);
+
+                    }
+                }
+                //録画終了
+                setProgress(50,"PDF recorder finish");
+                await sleep(1000);
+                recorder.stop();
+                console.log("recorder stopped");
+            }, function (reason) {
+                // PDF loading error
+                console.error(reason);
+            });
+        }
+    </script>
+</body>
+</html>
