@@ -62,6 +62,7 @@
 
         uploadPdf = async (e) => {
             if(!e.files[0])return;
+            const fileName =  e.files[0].name.slice(0, e.files[0].name.lastIndexOf("."));
             setProgress(5,"PDF upload");
             const loadingTask = pdfJsLib.getDocument(await readFileAsync(e.files[0]));
             loadingTask.promise.then(async function (pdf) {
@@ -87,7 +88,7 @@
                     const data = ffmpeg.FS('readFile', 'output.mp4');
                     console.log("mp4 encode finish");
                     setProgress(90,"mp4 encode finish");
-                    anchor.download = 'movie.mp4';
+                    anchor.download = `${fileName}.mp4`;
                     anchor.href = window.URL.createObjectURL(new Blob([data.buffer], {type: 'video/mp4'}));
                     anchor.style.display = 'block';
                     anchor.click();
